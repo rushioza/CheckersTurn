@@ -15,6 +15,7 @@ public class Player : MonoBehaviour
         if (BoardManager.insta.currentTurn == mySide)
         {
             Debug.Log("YESS Your Turn!");
+            BoardManager.insta.OnSelectedPlayer(this);
         }
         else
         {
