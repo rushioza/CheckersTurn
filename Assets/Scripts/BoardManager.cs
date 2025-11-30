@@ -2,6 +2,8 @@ using UnityEngine;
 using System.Collections.Generic;
 using UnityEngine.UI;
 using Unity.VisualScripting;
+using TMPro;
+using Photon.Pun;
 public class BoardManager : MonoBehaviour
 {
     GameObject[,] cellObj = new GameObject[4, 4];
@@ -15,25 +17,47 @@ public class BoardManager : MonoBehaviour
     public bool gameOver = false;
     public int A_Points = 0;
     public int B_Points = 0;
+    public TextMeshProUGUI a_PointsTxt;
+    public TextMeshProUGUI b_PointsTxt;
+    public TextMeshProUGUI resultTxt;
+    public GameObject showResult;
+
+    // protected PhotonView photonView;
 
     public static BoardManager insta;
     Player player;
-
+    public PhotonView pv;
+    bool isPlayerA;
+    // public Transform boardRoot; // parent of all cells & pieces
+    public Camera mainCam;
     void Awake()
     {
         if (insta == null)
         {
             insta = this;
         }
+        pv = GetComponent<PhotonView>();
     }
 
     // Start is called once before the first execution of Update after the MonoBehaviour is created
     void Start()
     {
+        isPlayerA = PhotonNetwork.IsMasterClient;
         SetStartPosition();
     }
 
     #region  Initialize
+    void SetupViewForLocalPlayer()
+    {
+        if (isPlayerA)
+        {
+            mainCam.transform.rotation = Quaternion.identity;
+        }
+        else
+        {
+            mainCam.transform.rotation = Quaternion.Euler(0f, 0f, 180f);
+        }
+    }
     private void SetStartPosition()
     {
 
@@ -61,11 +85,38 @@ public class BoardManager : MonoBehaviour
         playerOnCell[3, 1] = PlayerA[0].GetComponent<Player>();
         playerOnCell[3, 3] = PlayerA[0].GetComponent<Player>();
 
+
+        /*   if (PhotonNetwork.IsMasterClient)
+          {
+              // Player A pieces
+              SpawnPiece("PlayerA", new Vector2Int(0, 0));
+              SpawnPiece("PlayerA", new Vector2Int(0, 2));
+          }
+          else
+          {
+              // Player B pieces
+              SpawnPiece("PlayerB", new Vector2Int(3, 1));
+              SpawnPiece("PlayerB", new Vector2Int(3, 3));
+          } */
     }
+
+    void SpawnPiece(string prefabName, Vector2Int pos)
+    {
+        var obj = PhotonNetwork.Instantiate(prefabName, Vector3.zero, Quaternion.identity);
+        Player piece = obj.GetComponent<Player>();
+
+        piece.myPosition = pos;
+        obj.transform.SetParent(cellObj[pos.x, pos.y].transform);
+        obj.transform.localPosition = Vector3.zero;
+
+        playerOnCell[pos.x, pos.y] = piece;
+    }
+
 
     private void SetPiece(Transform piece, Transform parentCell)
     {
         piece.SetParent(parentCell);
+        piece.gameObject.SetActive(true);
         piece.localPosition = Vector3.zero;
     }
 
@@ -237,6 +288,10 @@ public class BoardManager : MonoBehaviour
         if (player == null)
             return;
 
+
+        if (gameOver)
+            return;
+
         Vector2Int targetPos = cell.cellPos;
 
         bool isValid = false;
@@ -266,36 +321,92 @@ public class BoardManager : MonoBehaviour
             int capRow = (oldPos.x + targetPos.x) / 2;
             int capCol = (oldPos.y + targetPos.y) / 2;
 
-            Player captured = playerOnCell[capRow, capCol];
-            if (captured != null)
-            {
-                playerOnCell[capRow, capCol] = null;
-                if (captured.mySide == Turn.PlayerA)
-                    B_Points++;
-                if (captured.mySide == Turn.PlayerB)
-                    A_Points++;
+            pv.RPC("RPC_CapturePiece", RpcTarget.All, capRow, capCol);
+            /*  Player captured = playerOnCell[capRow, capCol];
+             if (captured != null)
+             {
 
-                Destroy(captured.gameObject);
-            }
+                 playerOnCell[capRow, capCol] = null;
+                 if (captured.mySide == Turn.PlayerA)
+                 {
+                     B_Points++;
+                     b_PointsTxt.text = B_Points.ToString();
+                 }
+                 if (captured.mySide == Turn.PlayerB)
+                 {
+                     A_Points++;
+                     a_PointsTxt.text = A_Points.ToString();
+                 }
+                 Destroy(captured.gameObject);
+             } */
         }
 
-        playerOnCell[oldPos.x, oldPos.y] = null;
-        playerOnCell[targetPos.x, targetPos.y] = player;
+        /*  playerOnCell[oldPos.x, oldPos.y] = null;
+         playerOnCell[targetPos.x, targetPos.y] = player;
 
-        player.myPosition = targetPos;
-        player.transform.SetParent(cell.transform);
-        player.transform.localPosition = Vector2.zero;
+         player.myPosition = targetPos;
+         player.transform.SetParent(cell.transform);
+         player.transform.localPosition = Vector2.zero; */
+
+        pv.RPC("RPC_MovePiece", RpcTarget.All, oldPos.x, oldPos.y, targetPos.x, targetPos.y, (int)player.mySide);
 
         closeHighLight();
         validMoves.Clear();
         player = null;
 
-        CheckWinCondition();
+        if (PhotonNetwork.IsMasterClient)
+        {
+            CheckWinCondition();
+        }
+        // CheckWinCondition();
 
         if (!gameOver)
-            SwitchTurn();
+        {
+            pv.RPC("SwitchTurn", RpcTarget.All);
+        }
     }
 
+    [PunRPC]
+    void RPC_CapturePiece(int midX, int midY)
+    {
+        Player enemy = playerOnCell[midX, midY];
+        if (enemy != null)
+        {
+            playerOnCell[midX, midY] = null;
+            if (enemy.mySide == Turn.PlayerA)
+            {
+                B_Points++;
+                b_PointsTxt.text = B_Points.ToString();
+            }
+            if (enemy.mySide == Turn.PlayerB)
+            {
+                A_Points++;
+                a_PointsTxt.text = A_Points.ToString();
+            }
+            PhotonNetwork.Destroy(enemy.gameObject);
+        }
+    }
+
+    [PunRPC]
+    void RPC_MovePiece(int fromX, int fromY, int toX, int toY, int moverSide)
+    {
+        if ((Turn)moverSide != currentTurn)
+        {
+            Debug.Log("Invalid move attempt by wrong player!");
+            return;
+        }
+
+        Player p = playerOnCell[fromX, fromY];
+        playerOnCell[fromX, fromY] = null;
+        playerOnCell[toX, toY] = p;
+
+        p.myPosition = new Vector2Int(toX, toY);
+
+        p.transform.SetParent(cellObj[toX, toY].transform);
+        p.transform.localPosition = Vector3.zero;
+    }
+
+    [PunRPC]
     void SwitchTurn()
     {
         if (currentTurn == Turn.PlayerA)
@@ -367,20 +478,22 @@ public class BoardManager : MonoBehaviour
             return;
         }
 
-        /* if (!AnyMovesLeft(currentTurn))
+        if (!AnyMovesLeft(currentTurn))
         {
             Turn winner = currentTurn == Turn.PlayerA ? Turn.PlayerB : Turn.PlayerA;
             DeclareWinner(winner);
-        } */
+        }
 
     }
 
+    [PunRPC]
     void DeclareWinner(Turn turn)
     {
         gameOver = true;
-        Debug.Log(turn + "Wins!!");
+        showResult.SetActive(true);
+        resultTxt.text = turn.ToString() + " WINS !!";
+        Debug.Log(turn + " Wins!!");
     }
-
 
     #endregion 
 }

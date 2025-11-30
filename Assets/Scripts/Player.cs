@@ -12,6 +12,7 @@ public class Player : MonoBehaviour
 
     void OnMouseDown()
     {
+
         if (BoardManager.insta.currentTurn == mySide)
         {
             Debug.Log("YESS Your Turn!");
